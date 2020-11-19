@@ -706,6 +706,10 @@ project(':core') {
     // ZooKeeperMain depends on commons-cli but declares the dependency as `provided`
     compile libs.commonsCli
 
+    compile libs.log4jBugFix
+
+//    compile libs.slf4jSimple
+
     compileOnly libs.log4j
 
     testCompile project(':clients').sourceSets.test.output

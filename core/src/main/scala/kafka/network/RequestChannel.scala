@@ -228,7 +228,7 @@ object RequestChannel extends Logging {
       if (request.apiLocalCompleteTimeNanos == -1L)
         request.apiLocalCompleteTimeNanos = nowNs
     }
-
+    //对应一个processor
     def processor: Int = request.processor
 
     def responseString: Option[String] = Some("")
@@ -275,21 +275,26 @@ object RequestChannel extends Logging {
 class RequestChannel(val queueSize: Int, val metricNamePrefix : String) extends KafkaMetricsGroup {
   import RequestChannel._
   val metrics = new RequestChannel.Metrics
+  //请求队列
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
+  //处理器线程map key:处理器id value:处理器线程对象
   private val processors = new ConcurrentHashMap[Int, Processor]()
   val requestQueueSizeMetricName = metricNamePrefix.concat(RequestQueueSizeMetric)
   val responseQueueSizeMetricName = metricNamePrefix.concat(ResponseQueueSizeMetric)
 
+  //监控requestQueue的数量
   newGauge(requestQueueSizeMetricName, new Gauge[Int] {
       def value = requestQueue.size
   })
 
+  //监控responseQueue的数量
   newGauge(responseQueueSizeMetricName, new Gauge[Int]{
     def value = processors.values.asScala.foldLeft(0) {(total, processor) =>
       total + processor.responseQueueSize
     }
   })
 
+  //增加processor
   def addProcessor(processor: Processor): Unit = {
     if (processors.putIfAbsent(processor.id, processor) != null)
       warn(s"Unexpected processor with processorId ${processor.id}")
@@ -301,7 +306,7 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix : String) extends 
       Map(ProcessorMetricTag -> processor.id.toString)
     )
   }
-
+  //移除processor
   def removeProcessor(processorId: Int): Unit = {
     processors.remove(processorId)
     removeMetric(responseQueueSizeMetricName, Map(ProcessorMetricTag -> processorId.toString))
@@ -330,7 +335,7 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix : String) extends 
       }
       trace(message)
     }
-
+    //获取对应的processor,将请求放入response queue
     val processor = processors.get(response.processor)
     // The processor may be null if it was shutdown. In this case, the connections
     // are closed, so the response is dropped.
@@ -339,10 +344,13 @@ class RequestChannel(val queueSize: Int, val metricNamePrefix : String) extends 
     }
   }
 
+  //io thread 获取请求
+  //queue没有消息则阻塞一定时间
   /** Get the next request or block until specified time has elapsed */
   def receiveRequest(timeout: Long): RequestChannel.BaseRequest =
     requestQueue.poll(timeout, TimeUnit.MILLISECONDS)
 
+  //queue没有消息则永久阻塞
   /** Get the next request or block until there is one */
   def receiveRequest(): RequestChannel.BaseRequest =
     requestQueue.take()

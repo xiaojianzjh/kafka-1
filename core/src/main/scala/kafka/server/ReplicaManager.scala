@@ -876,6 +876,7 @@ class ReplicaManager(val config: KafkaConfig,
                     clientMetadata: Option[ClientMetadata]): Unit = {
     val isFromFollower = Request.isValidBrokerId(replicaId)
     val isFromConsumer = !(isFromFollower || replicaId == Request.FutureLocalReplicaId)
+    //确定消息读取范围
     val fetchIsolation = if (!isFromConsumer)
       FetchLogEnd
     else if (isolationLevel == IsolationLevel.READ_COMMITTED)

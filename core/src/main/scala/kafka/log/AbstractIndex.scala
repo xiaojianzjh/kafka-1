@@ -108,6 +108,7 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
 
   protected val lock = new ReentrantLock
 
+  //构建MappedByteBuffer对象,linux等操作系统使用页缓存来映射文件
   @volatile
   protected var mmap: MappedByteBuffer = {
     val newlyCreated = file.createNewFile()
@@ -115,14 +116,18 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
     try {
       /* pre-allocate the file if necessary */
       if(newlyCreated) {
+        //索引文件最大值不能小于索引项大小
         if(maxIndexSize < entrySize)
           throw new IllegalArgumentException("Invalid max index size: " + maxIndexSize)
+        //设置索引文件大小，需要转化为entrySize的倍数
         raf.setLength(roundDownToExactMultiple(maxIndexSize, entrySize))
       }
 
       /* memory-map the file */
+      //内存映射文件
       _length = raf.length()
       val idx = {
+        //判断是否可写
         if (writable)
           raf.getChannel.map(FileChannel.MapMode.READ_WRITE, 0, _length)
         else
@@ -371,13 +376,14 @@ abstract class AbstractIndex(@volatile var file: File, val baseOffset: Long, val
     // check if the index is empty
     if(_entries == 0)
       return (-1, -1)
-
+    //封装原版二分查找算法
     def binarySearch(begin: Int, end: Int) : (Int, Int) = {
       // binary search for the entry
       var lo = begin
       var hi = end
       while(lo < hi) {
         val mid = ceil(hi/2.0 + lo/2.0).toInt
+        //获取第mid个索引项的位移值
         val found = parseEntry(idx, mid)
         val compareResult = compareIndexEntry(found, target, searchEntity)
         if(compareResult > 0)

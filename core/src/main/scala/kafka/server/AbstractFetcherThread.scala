@@ -48,6 +48,7 @@ import scala.math._
 
 /**
  *  Abstract class for fetching data from multiple partitions from the same broker.
+ *  参考：https://greedypirate.github.io/2020/03/08/kafka-server%E7%AB%AF%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90%E4%B9%8B%E5%89%AF%E6%9C%AC%E5%90%8C%E6%AD%A5/#Replica%E6%9B%B4%E6%96%B0%E5%90%8C%E6%AD%A5%E7%8A%B6%E6%80%81
  */
 abstract class AbstractFetcherThread(name: String,
                                      clientId: String,
@@ -60,6 +61,7 @@ abstract class AbstractFetcherThread(name: String,
   type FetchData = FetchResponse.PartitionData[Records]
   type EpochData = OffsetsForLeaderEpochRequest.PartitionData
 
+  //维护分区拉取状态信息
   private val partitionStates = new PartitionStates[PartitionFetchState]
   protected val partitionMapLock = new ReentrantLock
   private val partitionMapCond = partitionMapLock.newCondition()
@@ -117,8 +119,9 @@ abstract class AbstractFetcherThread(name: String,
   private def maybeFetch(): Unit = {
     val (fetchStates, fetchRequestOpt) = inLock(partitionMapLock) {
       val fetchStates = partitionStates.partitionStateMap.asScala
+      //构建fetchRequest
       val ResultWithPartitions(fetchRequestOpt, partitionsWithError) = buildFetch(fetchStates)
-
+      //对于出错的分区，设置延迟时间重试
       handlePartitionsWithErrors(partitionsWithError, "maybeFetch")
 
       if (fetchRequestOpt.isEmpty) {
@@ -130,6 +133,7 @@ abstract class AbstractFetcherThread(name: String,
     }
 
     fetchRequestOpt.foreach { fetchRequest =>
+      //发送请求并处理
       processFetchRequest(fetchStates, fetchRequest)
     }
   }
@@ -323,15 +327,20 @@ abstract class AbstractFetcherThread(name: String,
             // In this case, we only want to process the fetch response if the partition state is ready for fetch and
             // the current offset is the same as the offset requested.
             val fetchState = fetchStates(topicPartition)
+            // 处理Response的条件：
+            // 1. 要获取的位移值和之前已保存的下一条待获取位移值相等
+            // 2. 当前分区处于可获取状态
             if (fetchState.fetchOffset == currentFetchState.fetchOffset && currentFetchState.isReadyForFetch) {
               val requestEpoch = if (fetchState.currentLeaderEpoch >= 0)
                 Some(fetchState.currentLeaderEpoch)
               else
                 None
               partitionData.error match {
+                //没有发生错误
                 case Errors.NONE =>
                   try {
                     // Once we hand off the partition data to the subclass, we can't mess with it any more in this thread
+                    //交给子类处理
                     val logAppendInfoOpt = processPartitionData(topicPartition, currentFetchState.fetchOffset,
                       partitionData)
 
@@ -345,6 +354,7 @@ abstract class AbstractFetcherThread(name: String,
                         // Update partitionStates only if there is no exception during processPartitionData
                         val newFetchState = PartitionFetchState(nextOffset, fetchState.currentLeaderEpoch,
                           state = Fetching)
+                        // 将该分区放置在有序Map读取顺序的末尾，保证公平性
                         partitionStates.updateAndMoveToEnd(topicPartition, newFetchState)
                         fetcherStats.byteRate.mark(validBytes)
                       }

@@ -48,6 +48,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
     private final Iterable<FileLogInputStream.FileChannelRecordBatch> batches;
 
     // mutable state
+    //topic分区下消息总字节数
     private final AtomicInteger size;
     private final FileChannel channel;
     private volatile File file;
@@ -163,8 +164,9 @@ public class FileRecords extends AbstractRecords implements Closeable {
         if (records.sizeInBytes() > Integer.MAX_VALUE - size.get())
             throw new IllegalArgumentException("Append of size " + records.sizeInBytes() +
                     " bytes is too large for segment with current file position at " + size.get());
-
+        //写入到byteBuffer中
         int written = records.writeFullyTo(channel);
+        //累加消息字节数
         size.getAndAdd(written);
         return written;
     }

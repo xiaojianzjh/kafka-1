@@ -60,6 +60,7 @@ case class ReplicaAssignment(replicas: Seq[Int],
 
 class ControllerContext {
   val stats = new ControllerStats
+  //下线Partition副本数量
   var offlinePartitionCount = 0
   var shuttingDownBrokerIds: mutable.Set[Int] = mutable.Set.empty
   private var liveBrokers: Set[Broker] = Set.empty
@@ -68,10 +69,14 @@ class ControllerContext {
   var epochZkVersion: Int = KafkaController.InitialControllerEpochZkVersion
 
   var allTopics: Set[String] = Set.empty
+  //topic下每个Partition的副本
   val partitionAssignments = mutable.Map.empty[String, mutable.Map[Int, ReplicaAssignment]]
+  //Partition详细信息map
   val partitionLeadershipInfo = mutable.Map.empty[TopicPartition, LeaderIsrAndControllerEpoch]
   val partitionsBeingReassigned = mutable.Set.empty[TopicPartition]
+  //Partition状态map
   val partitionStates = mutable.Map.empty[TopicPartition, PartitionState]
+  //保存副本状态
   val replicaStates = mutable.Map.empty[PartitionAndReplica, ReplicaState]
   val replicasOnOfflineDirs: mutable.Map[Int, Set[TopicPartition]] = mutable.Map.empty
 
@@ -110,6 +115,11 @@ class ControllerContext {
     replicaStates.clear()
   }
 
+  /**
+   *
+   * @param topicPartition
+   * @return replicas:即副本所在的brokerId
+   */
   def partitionReplicaAssignment(topicPartition: TopicPartition): Seq[Int] = {
     partitionAssignments.getOrElse(topicPartition.topic, mutable.Map.empty)
       .get(topicPartition.partition) match {
@@ -330,6 +340,12 @@ class ControllerContext {
     replicasForTopic(topic).exists(replica => replicaStates(replica) == state)
   }
 
+  /**
+   * 检查副本状态转换的前置状态是否正确
+   * @param replicas
+   * @param targetState
+   * @return
+   */
   def checkValidReplicaStateChange(replicas: Seq[PartitionAndReplica], targetState: ReplicaState): (Seq[PartitionAndReplica], Seq[PartitionAndReplica]) = {
     replicas.partition(replica => isValidReplicaStateTransition(replica, targetState))
   }

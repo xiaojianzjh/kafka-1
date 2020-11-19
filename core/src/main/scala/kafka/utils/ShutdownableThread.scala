@@ -25,15 +25,18 @@ abstract class ShutdownableThread(val name: String, val isInterruptible: Boolean
         extends Thread(name) with Logging {
   this.setDaemon(false)
   this.logIdent = "[" + name + "]: "
+  //控制线程关闭
   private val shutdownInitiated = new CountDownLatch(1)
   private val shutdownComplete = new CountDownLatch(1)
   @volatile private var isStarted: Boolean = false
-  
+
+  /**
+   * 线程关闭后（即run方法退出后）返回，否则一致阻塞
+   */
   def shutdown(): Unit = {
     initiateShutdown()
     awaitShutdown()
   }
-
   def isShutdownInitiated: Boolean = shutdownInitiated.getCount == 0
 
   def isShutdownComplete: Boolean = shutdownComplete.getCount == 0

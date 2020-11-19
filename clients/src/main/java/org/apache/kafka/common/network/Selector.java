@@ -310,11 +310,17 @@ public class Selector implements Selectable, AutoCloseable {
      * </p>
      */
     public void register(String id, SocketChannel socketChannel) throws IOException {
+        //确保连接未注册
         ensureNotRegistered(id);
+        //将socketChannel注册到nioSelector，监听读取事件
         registerChannel(id, socketChannel, SelectionKey.OP_READ);
         this.sensors.connectionCreated.record();
     }
 
+    /**
+     * 确保连接未注册
+     * @param id
+     */
     private void ensureNotRegistered(String id) {
         if (this.channels.containsKey(id))
             throw new IllegalStateException("There is already a connection for id " + id);
@@ -323,7 +329,9 @@ public class Selector implements Selectable, AutoCloseable {
     }
 
     protected SelectionKey registerChannel(String id, SocketChannel socketChannel, int interestedOps) throws IOException {
+        //注册
         SelectionKey key = socketChannel.register(nioSelector, interestedOps);
+        //构建KafkaChannel
         KafkaChannel channel = buildAndAttachKafkaChannel(socketChannel, id, key);
         this.channels.put(id, channel);
         if (idleExpiryManager != null)

@@ -18,8 +18,8 @@
 package kafka.controller
 
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.{CountDownLatch, LinkedBlockingQueue}
 import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.{CountDownLatch, LinkedBlockingQueue}
 
 import com.yammer.metrics.core.Gauge
 import kafka.metrics.{KafkaMetricsGroup, KafkaTimer}
@@ -27,8 +27,8 @@ import kafka.utils.CoreUtils.inLock
 import kafka.utils.ShutdownableThread
 import org.apache.kafka.common.utils.Time
 
-import scala.collection._
 import scala.collection.JavaConverters._
+import scala.collection._
 
 object ControllerEventManager {
   val ControllerEventThreadName = "controller-event-thread"
@@ -38,14 +38,22 @@ object ControllerEventManager {
 
 trait ControllerEventProcessor {
   def process(event: ControllerEvent): Unit
+
   def preempt(event: ControllerEvent): Unit
 }
 
 class QueuedEvent(val event: ControllerEvent,
                   val enqueueTimeMs: Long) {
+  //是否开始处理
   val processingStarted = new CountDownLatch(1)
+  //是否已被处理过
   val spent = new AtomicBoolean(false)
 
+  /**
+   * 处理事件
+   *
+   * @param processor
+   */
   def process(processor: ControllerEventProcessor): Unit = {
     if (spent.getAndSet(true))
       return
@@ -53,6 +61,11 @@ class QueuedEvent(val event: ControllerEvent,
     processor.process(event)
   }
 
+  /**
+   * 抢占式处理
+   *
+   * @param processor
+   */
   def preempt(processor: ControllerEventProcessor): Unit = {
     if (spent.getAndSet(true))
       return
@@ -72,6 +85,7 @@ class ControllerEventManager(controllerId: Int,
                              processor: ControllerEventProcessor,
                              time: Time,
                              rateAndTimeMetrics: Map[ControllerState, KafkaTimer]) extends KafkaMetricsGroup {
+
   import ControllerEventManager._
 
   @volatile private var _state: ControllerState = ControllerState.Idle
@@ -120,26 +134,36 @@ class ControllerEventManager(controllerId: Int,
 
   def isEmpty: Boolean = queue.isEmpty
 
+  /**
+   * 单线程处理事件
+   *
+   * @param name
+   */
   class ControllerEventThread(name: String) extends ShutdownableThread(name = name, isInterruptible = false) {
     logIdent = s"[ControllerEventThread controllerId=$controllerId] "
 
     override def doWork(): Unit = {
+      //从队列获取数据，队列为空时阻塞
       val dequeued = queue.take()
       dequeued.event match {
+        //controllermanager关闭时，会发送一个ShutdownEventThread，此时ControllerEventThread什么都不做
         case ShutdownEventThread => // The shutting down of the thread has been initiated at this point. Ignore this event.
         case controllerEvent =>
+          //控制器状态设置为事件状态
           _state = controllerEvent.state
 
+          // 更新对应事件在队列中保存的时间
           eventQueueTimeHist.update(time.milliseconds() - dequeued.enqueueTimeMs)
 
           try {
+            // 处理事件，同时计算处理速率
             rateAndTimeMetrics(state).time {
               dequeued.process(processor)
             }
           } catch {
             case e: Throwable => error(s"Uncaught error processing event $controllerEvent", e)
           }
-
+          //处理完，将控制器状态置为空闲
           _state = ControllerState.Idle
       }
     }

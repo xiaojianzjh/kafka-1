@@ -112,10 +112,19 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
     }
   }
 
+  //n=1时,表示从第8个字节开始读取，读取一个int值，为消息相对offset的值
   private def relativeOffset(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize)
 
+  //n=1时,表示从第12个字节开始读取，读取一个int值，为消息的日志段文件中该消息第一个字节的
+  //物理文件位置
   private def physical(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize + 4)
 
+  /**
+   * 查找第n个索引项，返回OffsetPosition key:绝对位移值 value:消息第一个字节物理位置
+   * @param buffer the buffer of this memory mapped index.
+   * @param n the slot
+   * @return the index entry stored in the given slot.
+   */
   override protected def parseEntry(buffer: ByteBuffer, n: Int): OffsetPosition = {
     OffsetPosition(baseOffset + relativeOffset(buffer, n), physical(buffer, n))
   }
@@ -140,13 +149,19 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    */
   def append(offset: Long, position: Int): Unit = {
     inLock(lock) {
+      //判断索引文件是否已满
       require(!isFull, "Attempt to append to a full index (size = " + _entries + ").")
+      //如果索引文件为空或者偏移量大于当前最大偏移量，可以写入
       if (_entries == 0 || offset > _lastOffset) {
         trace(s"Adding index entry $offset => $position to ${file.getAbsolutePath}")
+        //存储的是相对位移值->物理位置
         mmap.putInt(relativeOffset(offset))
         mmap.putInt(position)
+        //索引项加1
         _entries += 1
+        //最大位移值更新
         _lastOffset = offset
+        //写入索引项校验，大小必须为entrySize
         require(_entries * entrySize == mmap.position(), entries + " entries but file position in index is " + mmap.position() + ".")
       } else {
         throw new InvalidOffsetException(s"Attempt to append an offset ($offset) to position $entries no larger than" +

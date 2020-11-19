@@ -65,9 +65,11 @@ abstract class DelayedOperation(override val delayMs: Long,
    * true, others will still return false
    */
   def forceComplete(): Boolean = {
+    //设置请求完成标记位
     if (completed.compareAndSet(false, true)) {
       // cancel the timeout timer
       cancel()
+      //发送response给client
       onComplete()
       true
     } else {
@@ -163,6 +165,13 @@ object DelayedOperationPurgatory {
 
 /**
  * A helper purgatory class for bookkeeping delayed operations with a timeout, and expiring timed out operations.
+ * DelayedOperationPurgatory是用来缓存延时请求（Delayed Request）的。
+ * 所谓延时请求，就是那些一时未满足条件不能立刻处理的请求。比如设置了 acks=all 的 PRODUCE 请求，
+ * 一旦设置了 acks=all，那么该请求就必须等待 ISR 中所有副本都接收了消息后才能返回，此时处理该请求的 IO 线程就必须等待其他 Broker 的写入结果。当请求不能立刻处理时，
+ * 它就会暂存在 Purgatory 中。稍后一旦满足了完成条件，IO 线程会继续处理该请求，并将 Response 放入对应网络线程的响应队列中
+ * 参考：
+ * http://www.sirann.cn/blog/kafka-%E5%BB%B6%E8%BF%9F%E6%93%8D%E4%BD%9C%E4%B8%80delayedoperationpurgatory/
+ * https://blog.csdn.net/u013256816/article/details/89325701
  */
 final class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
                                                              timeoutTimer: Timer,
@@ -255,6 +264,9 @@ final class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: Stri
       // If the operation is already completed, stop adding it to the rest of the watcher list.
       if (operation.isCompleted)
         return false
+      //添加到watcherList中，待条件触发时会尝试调用checkAndComplete方法，尝试完成请求，比如DelayedProduce请求，
+      //等follow副本向Leader副本拉取消息时，leader副本调用updateFollowerFetchState，内部调用checkAndComplete，
+      //尝试完成请求，完成后会调用cancel方法，从时间轮移除此定时任务
       watchForOperation(key, operation)
 
       if (!watchCreated) {
@@ -270,6 +282,7 @@ final class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: Stri
     // if it cannot be completed by now and hence is watched, add to the expire queue also
     if (!operation.isCompleted) {
       if (timerEnabled)
+        //添加到时间轮，任务过期（超时）时处理
         timeoutTimer.add(operation)
       if (operation.isCompleted) {
         // cancel the timer task

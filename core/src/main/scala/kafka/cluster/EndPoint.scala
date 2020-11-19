@@ -61,6 +61,9 @@ object EndPoint {
 
 /**
  * Part of the broker definition - matching host/port pair to a protocol
+ * listener.security.protocol.map=CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNA
+ * listeners=CONTROLLER://192.1.1.8:9091,INTERNAL://192.1.1.8:9092,EXTERNAL://10.1
+ * control.plane.listener.name=CONTROLLER
  */
 case class EndPoint(host: String, port: Int, listenerName: ListenerName, securityProtocol: SecurityProtocol) {
   def connectionString: String = {

@@ -25,6 +25,14 @@ case class ElectionResult(topicPartition: TopicPartition, leaderAndIsr: Option[L
 
 object Election {
 
+  /**
+   * leader下线选举
+   * @param partition
+   * @param leaderAndIsrOpt
+   * @param uncleanLeaderElectionEnabled
+   * @param controllerContext
+   * @return
+   */
   private def leaderForOffline(partition: TopicPartition,
                                leaderAndIsrOpt: Option[LeaderAndIsr],
                                uncleanLeaderElectionEnabled: Boolean,
@@ -35,13 +43,16 @@ object Election {
     leaderAndIsrOpt match {
       case Some(leaderAndIsr) =>
         val isr = leaderAndIsr.isr
+        //PartitionLeaderElectionAlgorithms执行真正leader选举
         val leaderOpt = PartitionLeaderElectionAlgorithms.offlinePartitionLeaderElection(
           assignment, isr, liveReplicas.toSet, uncleanLeaderElectionEnabled, controllerContext)
+        //构造leaderAndIsr对象
         val newLeaderAndIsrOpt = leaderOpt.map { leader =>
           val newIsr = if (isr.contains(leader)) isr.filter(replica => controllerContext.isReplicaOnline(replica, partition))
           else List(leader)
           leaderAndIsr.newLeaderAndIsr(leader, newIsr)
         }
+        //封装partition数据返回
         ElectionResult(partition, newLeaderAndIsrOpt, liveReplicas)
 
       case None =>

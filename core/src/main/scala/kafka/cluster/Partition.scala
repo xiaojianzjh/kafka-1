@@ -715,6 +715,7 @@ class Partition(val topicPartition: TopicPartition,
     leaderLogIfLocal match {
       case Some(leaderLog) =>
         // keep the current immutable replica list reference
+        //isr副本数量
         val curInSyncReplicaIds = inSyncReplicaIds
 
         if (isTraceEnabled) {
@@ -731,8 +732,9 @@ class Partition(val topicPartition: TopicPartition,
             s"acked: ${ackedReplicas.map(logEndOffsetString)}, " +
             s"awaiting ${awaitingReplicas.map(logEndOffsetString)}")
         }
-
+        //最小副本同步数量
         val minIsr = leaderLog.config.minInSyncReplicas
+        //这里很关键，leaderLog.highWatermark >= requiredOffset 表示副本所在broker已经同步到消息,满足该请求完成条件，highWatermark = min(leo1,leo2,leo3)
         if (leaderLog.highWatermark >= requiredOffset) {
           /*
            * The topic may be configured not to accept messages if there are not enough replicas in ISR

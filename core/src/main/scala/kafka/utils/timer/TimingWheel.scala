@@ -130,9 +130,11 @@ private[timer] class TimingWheel(tickMs: Long, wheelSize: Int, startMs: Long, ta
       false
     } else if (expiration < currentTime + tickMs) {
       // Already expired
+      //[currentTime,currentTime + tickMs)范围内说明已过期
       false
     } else if (expiration < currentTime + interval) {
       // Put in its own bucket
+      //计算需要装入哪个bucket
       val virtualId = expiration / tickMs
       val bucket = buckets((virtualId % wheelSize.toLong).toInt)
       bucket.add(timerTaskEntry)
@@ -144,6 +146,7 @@ private[timer] class TimingWheel(tickMs: Long, wheelSize: Int, startMs: Long, ta
         // and the previous buckets gets reused; further calls to set the expiration within the same wheel cycle
         // will pass in the same value and hence return false, thus the bucket with the same expiration will not
         // be enqueued multiple times.
+        //bucket的过期时间变化了说明是回收重用的，需要重新加入到delayqueue
         queue.offer(bucket)
       }
       true
@@ -156,6 +159,7 @@ private[timer] class TimingWheel(tickMs: Long, wheelSize: Int, startMs: Long, ta
 
   // Try to advance the clock
   def advanceClock(timeMs: Long): Unit = {
+    //至少大于1格，才能推进
     if (timeMs >= currentTime + tickMs) {
       currentTime = timeMs - (timeMs % tickMs)
 

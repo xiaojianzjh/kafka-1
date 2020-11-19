@@ -30,6 +30,7 @@ import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import scala.collection._
 
 case class ProducePartitionStatus(requiredOffset: Long, responseStatus: PartitionResponse) {
+  /** 标识是否正在等待 ISR 集合中的 follower 副本从 leader 副本同步 requiredOffset 之前的消息 */
   @volatile var acksPending = false
 
   override def toString = s"[acksPending: $acksPending, error: ${responseStatus.error.code}, " +
@@ -57,12 +58,15 @@ class DelayedProduce(delayMs: Long,
   extends DelayedOperation(delayMs, lockOpt) {
 
   // first update the acks pending variable according to the error code
+  // 依据消息写入 leader 分区操作的错误码对 produceMetadata 的 produceStatus 进行初始化
   produceMetadata.produceStatus.foreach { case (topicPartition, status) =>
     if (status.responseStatus.error == Errors.NONE) {
       // Timeout error state will be cleared when required acks are received
+      // 对应 topic 分区消息写入 leader 副本成功，等待其它副本同步
       status.acksPending = true
       status.responseStatus.error = Errors.REQUEST_TIMED_OUT
     } else {
+      // 对应 topic 分区消息写入 leader 副本失败，无需等待
       status.acksPending = false
     }
 
@@ -91,10 +95,12 @@ class DelayedProduce(delayMs: Long,
             (false, err)
 
           case Right(partition) =>
+            //判断该partition是否满足请求完成条件，很关键
             partition.checkEnoughReplicasReachOffset(status.requiredOffset)
         }
 
         // Case B.1 || B.2
+        // 出现异常，或所有的 ISR 副本已经同步完成
         if (error != Errors.NONE || hasEnough) {
           status.acksPending = false
           status.responseStatus.error = error

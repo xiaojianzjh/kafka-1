@@ -107,6 +107,7 @@ class ZkReplicaStateMachine(config: KafkaConfig,
     if (replicas.nonEmpty) {
       try {
         controllerBrokerRequestBatch.newBatch()
+        //按照replica（即brokerId）分组，顺序处理每个broker上的副本
         replicas.groupBy(_.replica).foreach { case (replicaId, replicas) =>
           doHandleStateChanges(replicaId, replicas, targetState)
         }
@@ -156,7 +157,9 @@ class ZkReplicaStateMachine(config: KafkaConfig,
    * @param targetState The end state that the replica should be moved to
    */
   private def doHandleStateChanges(replicaId: Int, replicas: Seq[PartitionAndReplica], targetState: ReplicaState): Unit = {
+    //如果元数据缓存不存在副本状态，则初始化成NonExistentReplica状态
     replicas.foreach(replica => controllerContext.putReplicaStateIfNotExists(replica, NonExistentReplica))
+    //检验副本当前状态是否能转为目标状态，按是否能转换分组，异常转换的记录错误日志
     val (validReplicas, invalidReplicas) = controllerContext.checkValidReplicaStateChange(replicas, targetState)
     invalidReplicas.foreach(replica => logInvalidTransition(replica, targetState))
 
@@ -165,38 +168,51 @@ class ZkReplicaStateMachine(config: KafkaConfig,
         validReplicas.foreach { replica =>
           val partition = replica.topicPartition
           val currentState = controllerContext.replicaState(replica)
-
+          // 尝试从元数据缓存中获取该分区当前信息
+          // 包括Leader是谁、ISR都有哪些副本等数据
           controllerContext.partitionLeadershipInfo.get(partition) match {
             case Some(leaderIsrAndControllerEpoch) =>
+              //leader不能转换成NewReplica状态，记录错误日志
               if (leaderIsrAndControllerEpoch.leaderAndIsr.leader == replicaId) {
                 val exception = new StateChangeFailedException(s"Replica $replicaId for partition $partition cannot be moved to NewReplica state as it is being requested to become leader")
                 logFailedStateChange(replica, currentState, OfflineReplica, exception)
               } else {
+                // 否则，给该副本所在的Broker发送LeaderAndIsrRequest
+                // 向它同步该分区的数据, 之后给集群当前所有Broker发送
+                // UpdateMetadataRequest通知它们该分区数据发生变更
                 controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(Seq(replicaId),
                   replica.topicPartition,
                   leaderIsrAndControllerEpoch,
                   controllerContext.partitionFullReplicaAssignment(replica.topicPartition),
                   isNew = true)
                 logSuccessfulTransition(replicaId, partition, currentState, NewReplica)
+                // 更新元数据缓存中该副本对象的当前状态为NewReplica
                 controllerContext.putReplicaState(replica, NewReplica)
               }
+              //找不到数据
             case None =>
               logSuccessfulTransition(replicaId, partition, currentState, NewReplica)
+              // 仅仅更新元数据缓存中该副本对象的当前状态为NewReplica即可
               controllerContext.putReplicaState(replica, NewReplica)
           }
         }
       case OnlineReplica =>
         validReplicas.foreach { replica =>
           val partition = replica.topicPartition
+          //获取副本当前状态
           val currentState = controllerContext.replicaState(replica)
 
           currentState match {
             case NewReplica =>
               val assignment = controllerContext.partitionReplicaAssignment(partition)
+              // 如果副本列表不包含当前副本，视为异常情况
               if (!assignment.contains(replicaId)) {
+                //更新副本列表
                 controllerContext.updatePartitionReplicaAssignment(partition, assignment :+ replicaId)
               }
             case _ =>
+              // 如果存在分区信息
+              // 向该副本对象所在Broker发送请求，令其同步该分区数据
               controllerContext.partitionLeadershipInfo.get(partition) match {
                 case Some(leaderIsrAndControllerEpoch) =>
                   controllerBrokerRequestBatch.addLeaderAndIsrRequestForBrokers(Seq(replicaId),
@@ -207,6 +223,7 @@ class ZkReplicaStateMachine(config: KafkaConfig,
               }
           }
           logSuccessfulTransition(replicaId, partition, currentState, OnlineReplica)
+          // 将该副本对象设置成OnlineReplica状态
           controllerContext.putReplicaState(replica, OnlineReplica)
         }
       case OfflineReplica =>

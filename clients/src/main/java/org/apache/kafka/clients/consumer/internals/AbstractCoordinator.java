@@ -227,26 +227,26 @@ public abstract class AbstractCoordinator implements Closeable {
 
         do {
             final RequestFuture<Void> future = lookupCoordinator();
-            client.poll(future, timer);
+        client.poll(future, timer);
 
-            if (!future.isDone()) {
-                // ran out of time
-                break;
-            }
+        if (!future.isDone()) {
+            // ran out of time
+            break;
+        }
 
-            if (future.failed()) {
-                if (future.isRetriable()) {
-                    log.debug("Coordinator discovery failed, refreshing metadata");
-                    client.awaitMetadataUpdate(timer);
-                } else
-                    throw future.exception();
-            } else if (coordinator != null && client.isUnavailable(coordinator)) {
-                // we found the coordinator, but the connection has failed, so mark
-                // it dead and backoff before retrying discovery
-                markCoordinatorUnknown();
-                timer.sleep(rebalanceConfig.retryBackoffMs);
-            }
-        } while (coordinatorUnknown() && timer.notExpired());
+        if (future.failed()) {
+            if (future.isRetriable()) {
+                log.debug("Coordinator discovery failed, refreshing metadata");
+                client.awaitMetadataUpdate(timer);
+            } else
+                throw future.exception();
+        } else if (coordinator != null && client.isUnavailable(coordinator)) {
+            // we found the coordinator, but the connection has failed, so mark
+            // it dead and backoff before retrying discovery
+            markCoordinatorUnknown();
+            timer.sleep(rebalanceConfig.retryBackoffMs);
+        }
+    } while (coordinatorUnknown() && timer.notExpired());
 
         return !coordinatorUnknown();
     }

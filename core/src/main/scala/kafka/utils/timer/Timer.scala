@@ -23,6 +23,9 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 import kafka.utils.threadsafe
 import org.apache.kafka.common.utils.{KafkaThread, Time}
 
+/**
+ * 时间轮接口
+ */
 trait Timer {
   /**
     * Add a new task to this executor. It will be executed after the task's delay
@@ -50,7 +53,9 @@ trait Timer {
     */
   def shutdown(): Unit
 }
-
+/**
+ * 时间轮具体实现 参考：https://www.jianshu.com/p/87240220097b
+ */
 @threadsafe
 class SystemTimer(executorName: String,
                   tickMs: Long = 1,
@@ -62,7 +67,7 @@ class SystemTimer(executorName: String,
     def newThread(runnable: Runnable): Thread =
       KafkaThread.nonDaemon("executor-"+executorName, runnable)
   })
-
+  //保存过期bucket
   private[this] val delayQueue = new DelayQueue[TimerTaskList]()
   private[this] val taskCounter = new AtomicInteger(0)
   private[this] val timingWheel = new TimingWheel(
@@ -87,10 +92,15 @@ class SystemTimer(executorName: String,
     }
   }
 
+  /**
+   * 添加任务
+   * @param timerTaskEntry
+   */
   private def addTimerTaskEntry(timerTaskEntry: TimerTaskEntry): Unit = {
     if (!timingWheel.add(timerTaskEntry)) {
       // Already expired or cancelled
       if (!timerTaskEntry.cancelled)
+        //到期的任务，使用taskExecutor执行
         taskExecutor.submit(timerTaskEntry.timerTask)
     }
   }
@@ -107,7 +117,9 @@ class SystemTimer(executorName: String,
       writeLock.lock()
       try {
         while (bucket != null) {
+          //时间轮时钟向前推进
           timingWheel.advanceClock(bucket.getExpiration())
+          //已过期的bucket,清空上面的任务，并将任务重新加入到下层时间轮，当下层时间轮转完一圈时，上层时间轮向前推进一格
           bucket.flush(reinsert)
           bucket = delayQueue.poll()
         }

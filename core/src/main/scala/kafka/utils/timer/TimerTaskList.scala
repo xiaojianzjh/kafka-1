@@ -116,7 +116,7 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
       expiration.set(-1L)
     }
   }
-
+  //获取已过期的元素
   def getDelay(unit: TimeUnit): Long = {
     unit.convert(max(getExpiration - Time.SYSTEM.hiResClockMs, 0), TimeUnit.MILLISECONDS)
   }

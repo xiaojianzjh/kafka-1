@@ -59,6 +59,7 @@ class KafkaRequestHandler(id: Int,
 
       req match {
         case RequestChannel.ShutdownRequest =>
+          //broker关闭时，调用KafkaRequestHandlerPool.shutdown(),发送shutdownRequest到requestQueue,线程获取到shutdownReques后停止
           debug(s"Kafka request handler $id on broker $brokerId received shut down command")
           shutdownComplete.countDown()
           return
@@ -74,6 +75,7 @@ class KafkaRequestHandler(id: Int,
               Exit.exit(e.statusCode)
             case e: Throwable => error("Exception when handling request", e)
           } finally {
+            //释放请求缓存区资源
             request.releaseBuffer()
           }
 
@@ -101,21 +103,25 @@ class KafkaRequestHandlerPool(val brokerId: Int,
                               requestHandlerAvgIdleMetricName: String,
                               logAndThreadNamePrefix : String) extends Logging with KafkaMetricsGroup {
 
+  //线程池数量可以动态修改，需要保证多线程下原子性操作和内存可见性
   private val threadPoolSize: AtomicInteger = new AtomicInteger(numThreads)
   /* a meter to track the average free capacity of the request handlers */
   private val aggregateIdleMeter = newMeter(requestHandlerAvgIdleMetricName, "percent", TimeUnit.NANOSECONDS)
 
   this.logIdent = "[" + logAndThreadNamePrefix + " Kafka Request Handler on Broker " + brokerId + "], "
   val runnables = new mutable.ArrayBuffer[KafkaRequestHandler](numThreads)
+  //根据配置文件num.io.threads创建相应数量线程
   for (i <- 0 until numThreads) {
     createHandler(i)
   }
 
+  //创建线程
   def createHandler(id: Int): Unit = synchronized {
     runnables += new KafkaRequestHandler(id, brokerId, aggregateIdleMeter, threadPoolSize, requestChannel, apis, time)
     KafkaThread.daemon(logAndThreadNamePrefix + "-kafka-request-handler-" + id, runnables(id)).start()
   }
 
+  //重置线程池大小
   def resizeThreadPool(newSize: Int): Unit = synchronized {
     val currentSize = threadPoolSize.get
     info(s"Resizing request handler thread pool size from $currentSize to $newSize")
@@ -125,17 +131,23 @@ class KafkaRequestHandlerPool(val brokerId: Int,
       }
     } else if (newSize < currentSize) {
       for (i <- 1 to (currentSize - newSize)) {
+        //将KafkaRequestHandler的stopped标记置为true,则线程中的while循环中断，线程停止
         runnables.remove(currentSize - i).stop()
       }
     }
     threadPoolSize.set(newSize)
   }
 
+  /**
+   * Broker关闭时调用，使用countdownlatch优雅关闭,保证线程可以正常关闭
+   */
   def shutdown(): Unit = synchronized {
     info("shutting down")
     for (handler <- runnables)
+      //发送关闭请求
       handler.initiateShutdown()
     for (handler <- runnables)
+      //等待线程响应
       handler.awaitShutdown()
     info("shut down completely")
   }

@@ -1366,15 +1366,28 @@ class KafkaController(val config: KafkaConfig,
     }
   }
 
+  /**
+   * 可能执行controller卸任操作-节点数据变更时执行
+   */
   private def maybeResign(): Unit = {
+    //判断该broker是否之前为controller
     val wasActiveBeforeChange = isActive
+    //重新注册/controller节点监听器
     zkClient.registerZNodeChangeHandlerAndCheckExistence(controllerChangeHandler)
+    //获取/controller节点数据变更后controller所在的broker
     activeControllerId = zkClient.getControllerId.getOrElse(-1)
+    //如果原来是controller,当前不是，需要执行卸任操作
     if (wasActiveBeforeChange && !isActive) {
       onControllerResignation()
     }
   }
 
+  /**
+   * 触发选举场景:
+   * 1. 集群从零启动时；
+   * 2. Broker 侦测 /controller 节点消失时；
+   * 3. Broker 侦测到 /controller 节点数据发生变更时。
+   */
   private def elect(): Unit = {
     activeControllerId = zkClient.getControllerId.getOrElse(-1)
     /*
@@ -1415,12 +1428,17 @@ class KafkaController(val config: KafkaConfig,
 
   private def processBrokerChange(): Unit = {
     if (!isActive) return
+    //zk的broker数据 Map(broker, epoch)
     val curBrokerAndEpochs = zkClient.getAllBrokerAndEpochsInCluster
     val curBrokerIdAndEpochs = curBrokerAndEpochs map { case (broker, epoch) => (broker.id, epoch) }
     val curBrokerIds = curBrokerIdAndEpochs.keySet
+    //controllerContext的broker数据
     val liveOrShuttingDownBrokerIds = controllerContext.liveOrShuttingDownBrokerIds
+    //获取新增brokerId列表，取差集
     val newBrokerIds = curBrokerIds -- liveOrShuttingDownBrokerIds
+    //获取退出的brokerId列表
     val deadBrokerIds = liveOrShuttingDownBrokerIds -- curBrokerIds
+    //获取正在重启的broker列表（取交集后，根据broker版本号即epoch值判断是否重启）
     val bouncedBrokerIds = (curBrokerIds & liveOrShuttingDownBrokerIds)
       .filter(brokerId => curBrokerIdAndEpochs(brokerId) > controllerContext.liveBrokerIdAndEpochs(brokerId))
     val newBrokerAndEpochs = curBrokerAndEpochs.filter { case (broker, _) => newBrokerIds.contains(broker.id) }
@@ -1434,10 +1452,14 @@ class KafkaController(val config: KafkaConfig,
       s"bounced brokers: ${bouncedBrokerIdsSorted.mkString(",")}, " +
       s"all live brokers: ${liveBrokerIdsSorted.mkString(",")}")
 
+    //将新增broker加入到controller管理，创建一系列资源
     newBrokerAndEpochs.keySet.foreach(controllerChannelManager.addBroker)
+    //对于重启的broker,重新加入到controller管理
     bouncedBrokerIds.foreach(controllerChannelManager.removeBroker)
     bouncedBrokerAndEpochs.keySet.foreach(controllerChannelManager.addBroker)
+    //对于关闭的broker,移除controller管理
     deadBrokerIds.foreach(controllerChannelManager.removeBroker)
+    //针对三类broker情况，管理对应的controllerContext元数据
     if (newBrokerIds.nonEmpty) {
       controllerContext.addLiveBrokersAndEpochs(newBrokerAndEpochs)
       onBrokerStartup(newBrokerIdsSorted)
@@ -1832,10 +1854,16 @@ class KafkaController(val config: KafkaConfig,
     }
   }
 
+  /**
+   * 处理controller change事件 controller创建和controller节点数据变更时触发
+   */
   private def processControllerChange(): Unit = {
     maybeResign()
   }
 
+  /**
+   * 处理elect事件 当controller节点被删除时触发
+   */
   private def processReelect(): Unit = {
     maybeResign()
     elect()
@@ -2004,6 +2032,11 @@ class PreferredReplicaElectionHandler(eventManager: ControllerEventManager) exte
   override def handleCreation(): Unit = eventManager.put(ReplicaLeaderElection(None, ElectionType.PREFERRED, ZkTriggered))
 }
 
+/**
+ * create和DataChange 只需要当前broker执行卸任controller逻辑
+ * delete需要当前broker加入到controller选举中
+ * @param eventManager
+ */
 class ControllerChangeHandler(eventManager: ControllerEventManager) extends ZNodeChangeHandler {
   override val path: String = ControllerZNode.path
 

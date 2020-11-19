@@ -1409,7 +1409,12 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean, dynamicConfigO
     }
   }
 
+  /**
+   * 获取data plane 对应的listener
+   * @return
+   */
   def dataPlaneListeners: Seq[EndPoint] = {
+    //将controller plane listener 从listeners列表过滤
     Option(getString(KafkaConfig.ControlPlaneListenerNameProp)) match {
       case Some(controlPlaneListenerName) => listeners.filterNot(_.listenerName.value() == controlPlaneListenerName)
       case None => listeners
@@ -1447,15 +1452,23 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean, dynamicConfigO
     }
   }
 
+  /**
+   * 获取控制类监听器对应的安全协议
+    * @return
+   */
   private def getControlPlaneListenerNameAndSecurityProtocol: Option[(ListenerName, SecurityProtocol)] = {
+    // 查看Broker端参数control.plane.listener.name值
+    // 即是否启用了control plane监听器
     Option(getString(KafkaConfig.ControlPlaneListenerNameProp)) match {
       case Some(name) =>
         val listenerName = ListenerName.normalised(name)
+        //必须同时设置Broker端参数listener.security.protocol.map
+        // 并从该参数值中提取出该监听器对应的安全认证协议,找不到抛出异常
         val securityProtocol = listenerSecurityProtocolMap.getOrElse(listenerName,
           throw new ConfigException(s"Listener with ${listenerName.value} defined in " +
             s"${KafkaConfig.ControlPlaneListenerNameProp} not found in ${KafkaConfig.ListenerSecurityProtocolMapProp}."))
         Some(listenerName, securityProtocol)
-
+      //如果没有设置该参数值，直接返回None，说明没有启用control plane监听
       case None => None
    }
   }
